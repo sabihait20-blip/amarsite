@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", serif;
+  --color-navy-deep: #0A192F;
+  --color-navy-light: #112240;
+  --color-accent: #64FFDA;
+  --color-text-main: #CCD6F6;
+  --color-text-dim: #8892B0;
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--color-navy-deep)] text-[var(--color-text-main)] antialiased font-sans;
+  }
+}
+
+.glass-card {
+  @apply bg-[var(--color-navy-light)] border border-white/5 shadow-xl backdrop-blur-sm;
+}
+
+.markdown-body {
+  @apply text-[var(--color-text-main)] leading-relaxed;
+}
+
+.markdown-body p {
+  @apply mb-4;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  @apply font-bold text-white mt-6 mb-3;
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply ml-6 mb-4 list-disc;
+}
+
+.markdown-body code {
+  @apply bg-white/10 px-1.5 py-0.5 rounded text-sm font-mono text-[var(--color-accent)];
+}
+
+.markdown-body pre {
+  @apply bg-black/40 text-zinc-100 p-4 rounded-xl overflow-x-auto mb-4 font-mono text-sm border border-white/5;
+}
