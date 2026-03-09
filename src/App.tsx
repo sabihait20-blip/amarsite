@@ -53,7 +53,7 @@ import {
 import Markdown from "react-markdown";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { ai, Message } from "./services/gemini";
+import { getAi, Message } from "./services/gemini";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -291,7 +291,7 @@ export default function App() {
     // Don't await the AI part to keep UI responsive
     (async () => {
       try {
-        const chat = ai.chats.create({
+        const chat = getAi().chats.create({
           model: "gemini-3.1-pro-preview",
           config: {
             systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীদের সাথে বন্ধুত্বপূর্ণ এবং কমিউনিটি-ভিত্তিক উপায়ে কথা বলেন। আপনার উত্তরগুলো সোশ্যাল মিডিয়া পোস্টের মতো হওয়া উচিত। ফরম্যাটিংয়ের জন্য মার্কডাউন ব্যবহার করুন। অবশ্যই বাংলা ভাষায় উত্তর দেবেন। আপনি ব্যবহারকারীর পোস্টের সাথে সম্পর্কিত বাংলাদেশের জাতীয় পত্রিকার নিউজ এবং অরিজিনাল নিউজের লিঙ্ক প্রদান করবেন।",
@@ -356,7 +356,7 @@ export default function App() {
       // Generate AI reply
       (async () => {
         try {
-          const chat = ai.chats.create({
+          const chat = getAi().chats.create({
             model: "gemini-3.1-pro-preview",
             config: {
               systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীর কমেন্টের প্রেক্ষিতে একটি বন্ধুত্বপূর্ণ এবং প্রাসঙ্গিক রিপ্লাই দেবেন। আপনার রিপ্লাইটি ছোট এবং সোশ্যাল মিডিয়া কমেন্টের মতো হওয়া উচিত। অবশ্যই বাংলা ভাষায় উত্তর দেবেন।",

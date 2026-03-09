@@ -1,5 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
-import { ai } from "../services/gemini";
+import { getAi } from "../services/gemini";
 import { Loader2, AlertTriangle } from "lucide-react";
 
 interface Props {
@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
   private async analyzeError(error: Error, errorInfo: ErrorInfo) {
     this.setState({ isAnalyzing: true });
     try {
-      const chat = ai.chats.create({
+      const chat = getAi().chats.create({
         model: "gemini-3.1-pro-preview",
         config: {
           systemInstruction: "আপনি Amarsite AI। আপনি একজন বিশেষজ্ঞ ডেভেলপার। নিচে একটি এরর রিপোর্ট দেওয়া হলো। দয়া করে এররটি বিশ্লেষণ করুন এবং এর সম্ভাব্য সমাধান বা ফিক্স প্রদান করুন। আপনার উত্তরটি ছোট এবং সহজবোধ্য হওয়া উচিত। অবশ্যই বাংলা ভাষায় উত্তর দেবেন।",
