@@ -1,7 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { db } from "./services/firebase";
-import { collection, onSnapshot, addDoc, query, orderBy, updateDoc, doc, deleteDoc, arrayUnion } from "firebase/firestore";
 import { 
   Home, 
   Users, 
@@ -103,7 +101,14 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
   const [view, setView] = useState<'feed' | 'profile'>('feed');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    const saved = localStorage.getItem('isLoggedIn');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('isLoggedIn', JSON.stringify(isLoggedIn));
+  }, [isLoggedIn]);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const [authForm, setAuthForm] = useState({
@@ -147,17 +152,20 @@ export default function App() {
 
   const [posts, setPosts] = useState<Post[]>([]);
 
+  const fetchPosts = async () => {
+    try {
+      const res = await fetch("/api/posts");
+      const data = await res.json();
+      setPosts(data);
+    } catch (error) {
+      console.error("Failed to fetch posts:", error);
+    }
+  };
+
   useEffect(() => {
-    if (!db) return;
-    const q = query(collection(db, "posts"), orderBy("timestamp", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const postsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Post[];
-      setPosts(postsData);
-    });
-    return () => unsubscribe();
+    fetchPosts();
+    const interval = setInterval(fetchPosts, 5000);
+    return () => clearInterval(interval);
   }, []);
   const [input, setInput] = useState("");
   const [postImage, setPostImage] = useState("");
@@ -176,6 +184,84 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const signupAvatarInputRef = useRef<HTMLInputElement>(null);
+
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatUser, setChatUser] = useState<UserProfile | null>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatList, setChatList] = useState<any[]>([]);
+  const [isChatListOpen, setIsChatListOpen] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchChatList = async () => {
+    if (!isLoggedIn) return;
+    try {
+      const res = await fetch(`/api/chats/${userProfile.username}`);
+      const data = await res.json();
+      setChatList(data);
+    } catch (error) {
+      console.error("Failed to fetch chat list:", error);
+    }
+  };
+
+  const fetchMessages = async (partnerUsername: string) => {
+    try {
+      const res = await fetch(`/api/messages/${userProfile.username}/${partnerUsername}`);
+      const data = await res.json();
+      setChatMessages(data);
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    } catch (error) {
+      console.error("Failed to fetch messages:", error);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !chatUser) return;
+    
+    const msgData = {
+      senderId: userProfile.username,
+      receiverId: chatUser.username,
+      content: chatInput.trim(),
+      timestamp: Date.now()
+    };
+
+    try {
+      await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(msgData)
+      });
+      setChatInput("");
+      fetchMessages(chatUser.username);
+    } catch (error) {
+      console.error("Send message error:", error);
+    }
+  };
+
+  const openChat = (user: UserProfile) => {
+    setChatUser(user);
+    setIsChatOpen(true);
+    fetchMessages(user.username);
+  };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isChatOpen && chatUser) {
+      interval = setInterval(() => fetchMessages(chatUser.username), 3000);
+    }
+    return () => clearInterval(interval);
+  }, [isChatOpen, chatUser]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isChatListOpen) {
+      fetchChatList();
+      interval = setInterval(fetchChatList, 5000);
+    }
+    return () => clearInterval(interval);
+  }, [isChatListOpen]);
 
   const uploadToImgBB = (file: File, onProgress?: (percent: number) => void): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -281,14 +367,33 @@ export default function App() {
     };
 
     try {
-      if (db) {
-        await addDoc(collection(db, "posts"), userPost);
-      } else {
-        const localPost = { ...userPost, id: Math.random().toString(36).substr(2, 9) } as Post;
-        setPosts(prev => [localPost, ...prev]);
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: userPost.content,
+          timestamp: userPost.timestamp,
+          authorName: userPost.author.name,
+          authorAvatar: userPost.author.avatar,
+          authorIsAI: userPost.author.isAI,
+          image: userPost.image,
+          link: userPost.link
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchPosts();
       }
       
-      setUserProfile((prev) => ({ ...prev, walletBalance: prev.walletBalance + 0.10 }));
+      setUserProfile((prev) => {
+        const newBalance = prev.walletBalance + 0.10;
+        fetch("/api/user/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: prev.username, walletBalance: newBalance })
+        });
+        return { ...prev, walletBalance: newBalance };
+      });
       setInput("");
       setPostImage("");
       setPostLink("");
@@ -321,19 +426,27 @@ export default function App() {
             comments: [],
           };
           
-          if (db) {
-            await addDoc(collection(db, "posts"), aiPost);
-          } else {
-            const localAiPost = { ...aiPost, id: Math.random().toString(36).substr(2, 9) } as Post;
-            setPosts(prev => [localAiPost, ...prev].sort((a, b) => b.timestamp - a.timestamp));
-          }
+          await fetch("/api/posts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: aiPost.content,
+              timestamp: aiPost.timestamp,
+              authorName: aiPost.author.name,
+              authorAvatar: aiPost.author.avatar,
+              authorIsAI: aiPost.author.isAI,
+              image: null,
+              link: null
+            })
+          });
+          fetchPosts();
         } catch (error) {
           console.error("Chat error:", error);
         }
       })();
     } catch (error) {
       console.error("Post error:", error);
-      alert("পোস্ট করতে সমস্যা হয়েছে। দয়া করে ফায়ারবেস কনফিগারেশন চেক করুন।");
+      alert("পোস্ট করতে সমস্যা হয়েছে।");
     } finally {
       setIsLoading(false);
     }
@@ -341,58 +454,36 @@ export default function App() {
 
   const handleLike = async (post: Post) => {
     if (!isLoggedIn) return;
-    const likedBy = post.likedBy || [];
-    const isLiked = likedBy.includes(userProfile.name);
     
-    const newLikes = isLiked ? post.likes - 1 : post.likes + 1;
-    const newLikedBy = isLiked 
-      ? likedBy.filter(name => name !== userProfile.name)
-      : [...likedBy, userProfile.name];
-
-    if (db) {
-      try {
-        const postRef = doc(db, "posts", post.id);
-        await updateDoc(postRef, {
-          likes: newLikes,
-          likedBy: newLikedBy
-        });
-      } catch (error) {
-        console.error("Like error:", error);
-      }
-    } else {
-      setPosts(prev => prev.map(p => 
-        p.id === post.id 
-          ? { ...p, likes: newLikes, likedBy: newLikedBy }
-          : p
-      ));
+    try {
+      await fetch(`/api/posts/${post.id}/like`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userName: userProfile.name })
+      });
+      fetchPosts();
+    } catch (error) {
+      console.error("Like error:", error);
     }
   };
 
   const handleComment = async (postId: string, content: string) => {
     if (!content.trim()) return;
-    const newComment: Comment = {
-      id: Math.random().toString(36).substr(2, 9),
-      author: userProfile.name,
-      avatar: userProfile.avatar,
-      content: content.trim(),
-      timestamp: Date.now()
-    };
     
-    if (db) {
-      try {
-        const postRef = doc(db, "posts", postId);
-        await updateDoc(postRef, {
-          comments: arrayUnion(newComment)
-        });
-      } catch (error) {
-        console.error("Comment error:", error);
-      }
-    } else {
-      setPosts(prev => prev.map(p => 
-        p.id === postId 
-          ? { ...p, comments: [...(p.comments || []), newComment] }
-          : p
-      ));
+    try {
+      await fetch(`/api/posts/${postId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          author: userProfile.name,
+          avatar: userProfile.avatar,
+          content: content.trim(),
+          timestamp: Date.now()
+        })
+      });
+      fetchPosts();
+    } catch (error) {
+      console.error("Comment error:", error);
     }
 
     // AI Reply System
@@ -409,26 +500,17 @@ export default function App() {
           });
           const response = await chat.sendMessage({ message: `ব্যবহারকারী কমেন্ট করেছেন: "${content}"। আপনার আগের পোস্টটি ছিল: "${post.content}"। দয়া করে এই কমেন্টের একটি রিপ্লাই দিন।` });
           
-          const aiReply: Comment = {
-            id: Math.random().toString(36).substr(2, 9),
-            author: "Amarsite AI",
-            avatar: "https://picsum.photos/seed/gemini/100/100",
-            content: response.text || "ধন্যবাদ আপনার মন্তব্যের জন্য!",
-            timestamp: Date.now()
-          };
-          
-          if (db) {
-            const postRef = doc(db, "posts", postId);
-            await updateDoc(postRef, {
-              comments: arrayUnion(aiReply)
-            });
-          } else {
-            setPosts(prev => prev.map(p => 
-              p.id === postId 
-                ? { ...p, comments: [...(p.comments || []), aiReply] }
-                : p
-            ));
-          }
+          await fetch(`/api/posts/${postId}/comments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              author: "Amarsite AI",
+              avatar: "https://picsum.photos/seed/gemini/100/100",
+              content: response.text || "ধন্যবাদ আপনার মন্তব্যের জন্য!",
+              timestamp: Date.now()
+            })
+          });
+          fetchPosts();
         } catch (error) {
           console.error("AI Reply error:", error);
         }
@@ -451,14 +533,11 @@ export default function App() {
 
   const handleDeletePost = async (postId: string) => {
     if (window.confirm("আপনি কি নিশ্চিত যে আপনি এই পোস্টটি মুছে ফেলতে চান?")) {
-      if (db) {
-        try {
-          await deleteDoc(doc(db, "posts", postId));
-        } catch (error) {
-          console.error("Delete error:", error);
-        }
-      } else {
-        setPosts(prev => prev.filter(p => p.id !== postId));
+      try {
+        await fetch(`/api/posts/${postId}`, { method: "DELETE" });
+        fetchPosts();
+      } catch (error) {
+        console.error("Delete error:", error);
       }
     }
   };
@@ -466,19 +545,15 @@ export default function App() {
   const handleUpdatePost = async () => {
     if (!editingPost || !editContent.trim()) return;
     
-    if (db) {
-      try {
-        const postRef = doc(db, "posts", editingPost.id);
-        await updateDoc(postRef, { content: editContent });
-      } catch (error) {
-        console.error("Update error:", error);
-      }
-    } else {
-      setPosts(prev => prev.map(p => 
-        p.id === editingPost.id 
-          ? { ...p, content: editContent }
-          : p
-      ));
+    try {
+      await fetch(`/api/posts/${editingPost.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: editContent })
+      });
+      fetchPosts();
+    } catch (error) {
+      console.error("Update error:", error);
     }
     setEditingPost(null);
     setEditContent("");
@@ -623,6 +698,13 @@ export default function App() {
                 <img src={userProfile.avatar} className="w-8 h-8 rounded-lg object-cover border border-white/10 group-hover:border-[var(--color-accent)]/50 transition-all" />
                 <span className="text-white font-medium text-sm hidden md:block">{userProfile.name}</span>
               </div>
+              <button 
+                onClick={() => setIsChatListOpen(true)}
+                className="p-2 text-[var(--color-text-dim)] hover:text-[var(--color-accent)] transition-colors relative"
+                title="Messages"
+              >
+                <MessageCircle className="w-5 h-5" />
+              </button>
               <button 
                 onClick={() => setIsLoggedIn(false)}
                 className="p-2 text-[var(--color-text-dim)] hover:text-red-400 transition-colors"
@@ -916,6 +998,15 @@ export default function App() {
                       </button>
                     </>
                   )}
+                  {!isOwnProfile && (
+                    <button
+                      onClick={() => openChat(displayProfile)}
+                      className="bg-[var(--color-accent)] text-[var(--color-navy-deep)] px-6 md:px-8 py-3 md:py-4 rounded-2xl md:rounded-3xl font-black flex items-center gap-3 transition-all shadow-xl hover:scale-105"
+                    >
+                      <MessageCircle className="w-5 h-5" />
+                      <span>মেসেজ দিন</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1154,18 +1245,48 @@ export default function App() {
                 </p>
               </div>
 
-              <form className="space-y-4" onSubmit={(e) => {
+              <form className="space-y-4" onSubmit={async (e) => {
                 e.preventDefault();
                 if (authMode === 'signup') {
-                  setUserProfile(prev => ({
-                    ...prev,
-                    name: authForm.name || prev.name,
-                    bio: authForm.bio || prev.bio,
-                    avatar: authForm.avatar || prev.avatar
-                  }));
+                  try {
+                    const res = await fetch("/api/signup", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(authForm)
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                      setUserProfile(data.user);
+                      setIsLoggedIn(true);
+                      setIsAuthModalOpen(false);
+                    } else {
+                      alert(data.error || "সাইন আপ ব্যর্থ হয়েছে");
+                    }
+                  } catch (err) {
+                    alert("সার্ভার ত্রুটি");
+                  }
+                } else if (authMode === 'login') {
+                  try {
+                    const res = await fetch("/api/login", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ email: authForm.email, password: authForm.password })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                      setUserProfile(data.user);
+                      setIsLoggedIn(true);
+                      setIsAuthModalOpen(false);
+                    } else {
+                      alert(data.error || "লগইন ব্যর্থ হয়েছে");
+                    }
+                  } catch (err) {
+                    alert("সার্ভার ত্রুটি");
+                  }
+                } else {
+                  setIsLoggedIn(true);
+                  setIsAuthModalOpen(false);
                 }
-                setIsLoggedIn(true);
-                setIsAuthModalOpen(false);
               }}>
                 {authMode === 'signup' && (
                   <>
@@ -1665,6 +1786,120 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+      {/* Chat Modal */}
+      <AnimatePresence>
+        {isChatOpen && chatUser && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="glass-card w-full max-w-2xl h-[80vh] flex flex-col rounded-[2.5rem] border-white/10 overflow-hidden"
+            >
+              <div className="flex justify-between items-center p-6 border-b border-white/10 bg-[var(--color-navy-light)]">
+                <div className="flex items-center gap-4">
+                  <img src={chatUser.avatar} className="w-12 h-12 rounded-xl object-cover" />
+                  <div>
+                    <h2 className="text-xl font-bold text-white">{chatUser.name}</h2>
+                    <div className="text-sm text-[var(--color-accent)]">@{chatUser.username}</div>
+                  </div>
+                </div>
+                <button onClick={() => setIsChatOpen(false)} className="text-[var(--color-text-dim)] hover:text-white bg-white/5 p-2 rounded-full">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-[var(--color-navy-deep)]/50">
+                {chatMessages.map((msg, i) => {
+                  const isMe = msg.senderId === userProfile.username;
+                  return (
+                    <div key={i} className={cn("flex", isMe ? "justify-end" : "justify-start")}>
+                      <div className={cn(
+                        "max-w-[70%] p-4 rounded-2xl",
+                        isMe ? "bg-[var(--color-accent)] text-[var(--color-navy-deep)] rounded-br-sm" : "bg-white/10 text-white rounded-bl-sm border border-white/5"
+                      )}>
+                        <p className="text-sm md:text-base">{msg.content}</p>
+                        <div className={cn("text-[10px] mt-2 text-right opacity-70", isMe ? "text-[var(--color-navy-deep)]" : "text-[var(--color-text-dim)]")}>
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="p-4 border-t border-white/10 bg-[var(--color-navy-light)] flex gap-3">
+                <input 
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                  placeholder="মেসেজ লিখুন..."
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[var(--color-accent)]/50 transition-all"
+                />
+                <button 
+                  onClick={handleSendMessage}
+                  disabled={!chatInput.trim()}
+                  className="bg-[var(--color-accent)] text-[var(--color-navy-deep)] p-3 rounded-xl hover:opacity-90 transition-all disabled:opacity-50"
+                >
+                  <Send className="w-6 h-6" />
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Chat List Modal */}
+      <AnimatePresence>
+        {isChatListOpen && (
+          <div className="fixed inset-0 z-[190] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="glass-card w-full max-w-md h-[70vh] flex flex-col rounded-[2.5rem] border-white/10 overflow-hidden"
+            >
+              <div className="flex justify-between items-center p-6 border-b border-white/10 bg-[var(--color-navy-light)]">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <MessageCircle className="w-6 h-6 text-[var(--color-accent)]" />
+                  মেসেজ সমূহ
+                </h2>
+                <button onClick={() => setIsChatListOpen(false)} className="text-[var(--color-text-dim)] hover:text-white bg-white/5 p-2 rounded-full">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-[var(--color-navy-deep)]/50">
+                {chatList.length === 0 ? (
+                  <div className="text-center text-[var(--color-text-dim)] mt-10">
+                    কোনো মেসেজ নেই।
+                  </div>
+                ) : (
+                  chatList.map((partner, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => {
+                        setIsChatListOpen(false);
+                        openChat(partner);
+                      }}
+                      className="flex items-center gap-4 p-4 rounded-2xl hover:bg-white/5 cursor-pointer transition-all border border-transparent hover:border-white/10"
+                    >
+                      <img src={partner.avatar} className="w-12 h-12 rounded-xl object-cover" />
+                      <div>
+                        <div className="font-bold text-white">{partner.name}</div>
+                        <div className="text-xs text-[var(--color-accent)]">@{partner.username}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   </ErrorBoundary>
   );
