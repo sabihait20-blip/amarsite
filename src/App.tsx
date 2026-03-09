@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { db } from "./services/firebase";
+import { collection, onSnapshot, addDoc, query, orderBy, updateDoc, doc, deleteDoc, arrayUnion } from "firebase/firestore";
 import { 
   Home, 
   Users, 
@@ -45,7 +47,8 @@ import {
   Linkedin,
   Cake,
   Phone,
-  User2
+  User2,
+  Wallet
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { clsx, type ClassValue } from "clsx";
@@ -73,6 +76,7 @@ interface Post extends Message {
   };
   likes: number;
   isLiked: boolean;
+  likedBy: string[];
   comments: Comment[];
   image?: string;
   link?: string;
@@ -92,7 +96,10 @@ interface UserProfile {
   birthday: string;
   relationship: string;
   pin: string;
+  walletBalance: number;
 }
+
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
   const [view, setView] = useState<'feed' | 'profile'>('feed');
@@ -106,7 +113,8 @@ export default function App() {
     bio: "",
     avatar: ""
   });
-  const [userProfile, setUserProfile] = useState<UserProfile>({
+
+  const initialProfile: UserProfile = {
     name: "জন ডো",
     username: "johndoe",
     avatar: "https://picsum.photos/seed/user/200/200",
@@ -119,19 +127,38 @@ export default function App() {
     gender: "পুরুষ",
     birthday: "১৯৯৫-০১-০১",
     relationship: "সিঙ্গেল",
-    pin: "1234"
+    pin: "1234",
+    walletBalance: 0
+  };
+
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem('userProfile');
+    return saved ? JSON.parse(saved) : initialProfile;
   });
 
+  useEffect(() => {
+    localStorage.setItem('userProfile', JSON.stringify(userProfile));
+  }, [userProfile]);
+
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [isCashOutModalOpen, setIsCashOutModalOpen] = useState(false);
+  const [cashOutMethod, setCashOutMethod] = useState<'bkash' | 'nagad' | 'rocket'>('bkash');
+  const [cashOutPhone, setCashOutPhone] = useState('');
+
   const [posts, setPosts] = useState<Post[]>([]);
-  const [salamStep, setSalamStep] = useState<'salam' | 'final'>('salam');
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setSalamStep('final');
-    }, 3000);
-    return () => clearTimeout(timer);
+    if (!db) return;
+    const q = query(collection(db, "posts"), orderBy("timestamp", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const postsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Post[];
+      setPosts(postsData);
+    });
+    return () => unsubscribe();
   }, []);
-
   const [input, setInput] = useState("");
   const [postImage, setPostImage] = useState("");
   const [postLink, setPostLink] = useState("");
@@ -233,10 +260,10 @@ export default function App() {
   const [editContent, setEditContent] = useState("");
 
   const handlePost = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !db) return;
 
-    const userPost: Post = {
-      id: Math.random().toString(36).substr(2, 9),
+    setIsLoading(true);
+    const userPost = {
       role: "user",
       content: input.trim(),
       timestamp: Date.now(),
@@ -248,65 +275,69 @@ export default function App() {
       likes: 0,
       isLiked: false,
       comments: [],
-      image: postImage || undefined,
-      link: postLink || undefined,
+      image: postImage || null,
+      link: postLink || null,
     };
 
-    setPosts((prev) => [userPost, ...prev]);
+    await addDoc(collection(db, "posts"), userPost);
+    
+    // ... (rest of the code)
+    setUserProfile((prev) => ({ ...prev, walletBalance: prev.walletBalance + 0.10 }));
     setInput("");
     setPostImage("");
     setPostLink("");
     setShowLinkInput(false);
-    setIsLoading(true);
+    
+    // Don't await the AI part to keep UI responsive
+    (async () => {
+      try {
+        const chat = ai.chats.create({
+          model: "gemini-3.1-pro-preview",
+          config: {
+            systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীদের সাথে বন্ধুত্বপূর্ণ এবং কমিউনিটি-ভিত্তিক উপায়ে কথা বলেন। আপনার উত্তরগুলো সোশ্যাল মিডিয়া পোস্টের মতো হওয়া উচিত। ফরম্যাটিংয়ের জন্য মার্কডাউন ব্যবহার করুন। অবশ্যই বাংলা ভাষায় উত্তর দেবেন। আপনি ব্যবহারকারীর পোস্টের সাথে সম্পর্কিত বাংলাদেশের জাতীয় পত্রিকার নিউজ এবং অরিজিনাল নিউজের লিঙ্ক প্রদান করবেন।",
+          },
+        });
 
-    try {
-      const chat = ai.chats.create({
-        model: "gemini-3.1-pro-preview",
-        config: {
-          systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীদের সাথে বন্ধুত্বপূর্ণ এবং কমিউনিটি-ভিত্তিক উপায়ে কথা বলেন। আপনার উত্তরগুলো সোশ্যাল মিডিয়া পোস্টের মতো হওয়া উচিত। ফরম্যাটিংয়ের জন্য মার্কডাউন ব্যবহার করুন। অবশ্যই বাংলা ভাষায় উত্তর দেবেন।",
-        },
-      });
-
-      const response = await chat.sendMessage({ message: userPost.content });
-      
-      const aiPost: Post = {
-        id: Math.random().toString(36).substr(2, 9),
-        role: "model",
-        content: response.text || "দুঃখিত, আমি কোনো উত্তর তৈরি করতে পারিনি।",
-        timestamp: Date.now(),
-        author: {
-          name: "Amarsite AI",
-          avatar: "https://picsum.photos/seed/gemini/100/100",
-          isAI: true,
-        },
-        likes: Math.floor(Math.random() * 100),
-        isLiked: false,
-        comments: [],
-      };
-
-      setPosts((prev) => [aiPost, ...prev]);
-    } catch (error) {
-      console.error("Chat error:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleLike = (postId: string) => {
-    setPosts(prev => prev.map(post => {
-      if (post.id === postId) {
-        return {
-          ...post,
-          likes: post.isLiked ? post.likes - 1 : post.likes + 1,
-          isLiked: !post.isLiked
+        const response = await chat.sendMessage({ message: userPost.content });
+        
+        const aiPost = {
+          role: "model",
+          content: response.text || "দুঃখিত, আমি কোনো উত্তর তৈরি করতে পারিনি।",
+          timestamp: Date.now() + 1000,
+          author: {
+            name: "Amarsite AI",
+            avatar: "https://picsum.photos/seed/gemini/100/100",
+            isAI: true,
+          },
+          likes: Math.floor(Math.random() * 100),
+          isLiked: false,
+          comments: [],
         };
+        await addDoc(collection(db, "posts"), aiPost);
+      } catch (error) {
+        console.error("Chat error:", error);
+      } finally {
+        setIsLoading(false);
       }
-      return post;
-    }));
+    })();
   };
 
-  const handleComment = (postId: string, content: string) => {
-    if (!content.trim()) return;
+  const handleLike = async (post: Post) => {
+    if (!db || !isLoggedIn) return;
+    const postRef = doc(db, "posts", post.id);
+    const likedBy = post.likedBy || [];
+    const isLiked = likedBy.includes(userProfile.name);
+    
+    await updateDoc(postRef, {
+      likes: isLiked ? post.likes - 1 : post.likes + 1,
+      likedBy: isLiked 
+        ? likedBy.filter(name => name !== userProfile.name)
+        : [...likedBy, userProfile.name]
+    });
+  };
+
+  const handleComment = async (postId: string, content: string) => {
+    if (!content.trim() || !db) return;
     const newComment: Comment = {
       id: Math.random().toString(36).substr(2, 9),
       author: userProfile.name,
@@ -314,12 +345,40 @@ export default function App() {
       content: content.trim(),
       timestamp: Date.now()
     };
-    setPosts(prev => prev.map(post => {
-      if (post.id === postId) {
-        return { ...post, comments: [...post.comments, newComment] };
-      }
-      return post;
-    }));
+    const postRef = doc(db, "posts", postId);
+    await updateDoc(postRef, {
+      comments: arrayUnion(newComment)
+    });
+
+    // AI Reply System
+    const post = posts.find(p => p.id === postId);
+    if (post && post.author.isAI) {
+      // Generate AI reply
+      (async () => {
+        try {
+          const chat = ai.chats.create({
+            model: "gemini-3.1-pro-preview",
+            config: {
+              systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীর কমেন্টের প্রেক্ষিতে একটি বন্ধুত্বপূর্ণ এবং প্রাসঙ্গিক রিপ্লাই দেবেন। আপনার রিপ্লাইটি ছোট এবং সোশ্যাল মিডিয়া কমেন্টের মতো হওয়া উচিত। অবশ্যই বাংলা ভাষায় উত্তর দেবেন।",
+            },
+          });
+          const response = await chat.sendMessage({ message: `ব্যবহারকারী কমেন্ট করেছেন: "${content}"। আপনার আগের পোস্টটি ছিল: "${post.content}"। দয়া করে এই কমেন্টের একটি রিপ্লাই দিন।` });
+          
+          const aiReply: Comment = {
+            id: Math.random().toString(36).substr(2, 9),
+            author: "Amarsite AI",
+            avatar: "https://picsum.photos/seed/gemini/100/100",
+            content: response.text || "ধন্যবাদ আপনার মন্তব্যের জন্য!",
+            timestamp: Date.now()
+          };
+          await updateDoc(postRef, {
+            comments: arrayUnion(aiReply)
+          });
+        } catch (error) {
+          console.error("AI Reply error:", error);
+        }
+      })();
+    }
   };
 
   const handleShare = (post: Post) => {
@@ -335,17 +394,17 @@ export default function App() {
     }
   };
 
-  const handleDeletePost = (postId: string) => {
+  const handleDeletePost = async (postId: string) => {
+    if (!db) return;
     if (window.confirm("আপনি কি নিশ্চিত যে আপনি এই পোস্টটি মুছে ফেলতে চান?")) {
-      setPosts(prev => prev.filter(post => post.id !== postId));
+      await deleteDoc(doc(db, "posts", postId));
     }
   };
 
-  const handleUpdatePost = () => {
-    if (!editingPost || !editContent.trim()) return;
-    setPosts(prev => prev.map(post => 
-      post.id === editingPost.id ? { ...post, content: editContent } : post
-    ));
+  const handleUpdatePost = async () => {
+    if (!editingPost || !editContent.trim() || !db) return;
+    const postRef = doc(db, "posts", editingPost.id);
+    await updateDoc(postRef, { content: editContent });
     setEditingPost(null);
     setEditContent("");
   };
@@ -363,6 +422,36 @@ export default function App() {
     }
   };
 
+  const handleProfileClick = (author: any) => {
+    if (!isLoggedIn) {
+      setAuthMode('login');
+      setIsAuthModalOpen(true);
+      return;
+    }
+    if (author.name === userProfile.name) {
+      setSelectedUser(null);
+      setView('profile');
+    } else {
+      setSelectedUser({
+        name: author.name,
+        username: author.name.toLowerCase().replace(/\s/g, ''),
+        avatar: author.avatar,
+        cover: "https://picsum.photos/seed/cover/1200/400",
+        bio: "আমি এই প্ল্যাটফর্মে নতুন।",
+        location: "অজানা",
+        work: "অজানা",
+        education: "অজানা",
+        contact: "অজানা",
+        gender: "অজানা",
+        birthday: "অজানা",
+        relationship: "অজানা",
+        pin: "0000",
+        walletBalance: 0
+      });
+      setView('profile');
+    }
+  };
+
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -373,9 +462,13 @@ export default function App() {
   const formattedTime = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const formattedDate = currentTime.toLocaleDateString([], { day: 'numeric', month: 'long' });
 
+  const displayProfile = selectedUser || userProfile;
+  const isOwnProfile = !selectedUser || selectedUser.name === userProfile.name;
+
   return (
-    <div className="min-h-screen bg-[var(--color-navy-deep)] font-sans text-[var(--color-text-main)]">
-      {/* Unique Header */}
+    <ErrorBoundary>
+      <div className="min-h-screen bg-[var(--color-navy-deep)] font-sans text-[var(--color-text-main)]">
+        {/* Unique Header */}
       <header className="h-20 bg-[var(--color-navy-light)] border-b border-white/10 flex items-center justify-between px-4 md:px-8 sticky top-0 z-50 backdrop-blur-md">
         {/* 1. Logo */}
         <div className="flex items-center gap-2 md:gap-3">
@@ -471,42 +564,6 @@ export default function App() {
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-6 md:gap-8 p-4 md:p-8">
           {/* Main Content Area */}
           <main className="space-y-6 md:space-y-8">
-            {/* Welcome Section */}
-            <section className="glass-card p-6 md:p-10 rounded-3xl relative overflow-hidden group min-h-[150px] flex flex-col justify-center">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-[var(--color-accent)]/5 blur-3xl rounded-full -mr-32 -mt-32"></div>
-              
-              <AnimatePresence mode="wait">
-                {salamStep === 'salam' ? (
-                  <motion.div
-                    key="salam"
-                    initial={{ opacity: 0, scale: 0.8, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                    exit={{ opacity: 0, scale: 1.2, filter: "blur(10px)" }}
-                    transition={{ duration: 1, ease: "easeOut" }}
-                    className="text-center"
-                  >
-                    <h1 className="text-4xl md:text-7xl font-black text-[#8B0000] tracking-tighter drop-shadow-[0_0_15px_rgba(139,0,0,0.3)]">
-                      আসসালামু আলাইকুম
-                    </h1>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="final"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.8, delay: 0.2 }}
-                  >
-                    <h1 className="text-3xl md:text-5xl font-bold text-white mb-3 md:mb-4 tracking-tight leading-tight">
-                      Amarsite নেটওয়ার্কে যোগ দিন
-                    </h1>
-                    <p className="text-[var(--color-text-dim)] text-base md:text-lg max-w-xl">
-                      একটি বিকেন্দ্রীভূত প্ল্যাটফর্ম যেখানে আপনি আপনার চিন্তা ও জ্ঞান সবার সাথে শেয়ার করতে পারেন। আপনার ভাবনাগুলো ছড়িয়ে দিন।
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </section>
-
             {/* Insight Input */}
             {isLoggedIn ? (
               <div className="glass-card rounded-3xl p-4 md:p-6 space-y-4 border-l-4 border-l-[var(--color-accent)]">
@@ -638,7 +695,7 @@ export default function App() {
                       setIsAuthModalOpen(true);
                       return;
                     }
-                    handleLike(post.id);
+                    handleLike(post);
                   }} 
                   onComment={(content) => {
                     if (!isLoggedIn) {
@@ -654,8 +711,10 @@ export default function App() {
                     setEditingPost(post);
                     setEditContent(post.content);
                   }}
+                  onProfileClick={() => handleProfileClick(post.author)}
                   userAvatar={userProfile.avatar}
                   isAuthor={isLoggedIn && post.author.name === userProfile.name}
+                  currentUserName={userProfile.name}
                 />
               ))}
             </div>
@@ -703,7 +762,7 @@ export default function App() {
           {/* Header Section */}
           <div className="glass-card rounded-[2.5rem] md:rounded-[3.5rem] overflow-hidden shadow-2xl border border-white/10">
             <div className="h-56 md:h-80 bg-[var(--color-navy-deep)] relative overflow-hidden">
-              <img src={userProfile.cover} className="w-full h-full object-cover opacity-60 mix-blend-luminosity" />
+              <img src={displayProfile.cover} className="w-full h-full object-cover opacity-60 mix-blend-luminosity" />
               <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-navy-light)] via-[var(--color-navy-light)]/40 to-transparent"></div>
               
               {/* Decorative Elements */}
@@ -715,7 +774,7 @@ export default function App() {
               <div className="flex flex-col md:flex-row items-center md:items-end gap-8 md:gap-12">
                 <div className="relative group">
                   <div className="w-40 h-40 md:w-56 md:h-56 rounded-[2rem] md:rounded-[3rem] border-8 border-[var(--color-navy-light)] overflow-hidden bg-[var(--color-navy-deep)] shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative z-10 transition-transform duration-500 group-hover:scale-[1.02]">
-                    <img src={userProfile.avatar} className={cn("w-full h-full object-cover", isAvatarUploading && "opacity-50 grayscale")} />
+                    <img src={displayProfile.avatar} className={cn("w-full h-full object-cover", isAvatarUploading && "opacity-50 grayscale")} />
                     {isAvatarUploading && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md z-20">
                         <Loader2 className="w-10 h-10 text-[var(--color-accent)] animate-spin mb-3" />
@@ -741,15 +800,15 @@ export default function App() {
                 
                 <div className="flex-1 text-center md:text-left pb-2">
                   <div className="flex flex-col md:flex-row items-center gap-3 md:gap-6 mb-2">
-                    <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter">{userProfile.name}</h1>
+                    <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter">{displayProfile.name}</h1>
                     <div className="flex items-center gap-2 bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/20 text-[var(--color-accent)] px-4 py-1.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-[0.2em] shadow-[0_0_15px_rgba(0,255,242,0.1)]">
                       <ShieldCheck className="w-3 h-3 md:w-4 md:h-4" />
                       ভেরিফাইড মেম্বার
                     </div>
                   </div>
-                  <div className="text-[var(--color-accent)] font-bold mb-4 tracking-widest uppercase text-xs opacity-70">@{userProfile.username}</div>
+                  <div className="text-[var(--color-accent)] font-bold mb-4 tracking-widest uppercase text-xs opacity-70">@{displayProfile.username}</div>
                   <p className="text-[var(--color-text-dim)] text-lg md:text-xl font-medium italic serif max-w-2xl leading-relaxed opacity-80">
-                    "{userProfile.bio}"
+                    "{displayProfile.bio}"
                   </p>
                 </div>
 
@@ -764,20 +823,24 @@ export default function App() {
                   >
                     <Share2 className="w-5 h-5 text-[var(--color-accent)]" />
                   </button>
-                  <button 
-                    onClick={() => setIsEditModalOpen(true)}
-                    className="bg-white/5 hover:bg-[var(--color-accent)] hover:text-[var(--color-navy-deep)] text-white px-6 md:px-8 py-3 md:py-4 rounded-2xl md:rounded-3xl font-black flex items-center gap-3 transition-all border border-white/10 hover:border-transparent group shadow-xl"
-                  >
-                    <Edit2 className="w-5 h-5 transition-transform group-hover:rotate-12" />
-                    <span>এডিট প্রোফাইল</span>
-                  </button>
-                  <button 
-                    onClick={() => setIsPinModalOpen(true)}
-                    className="bg-white/5 hover:bg-white/10 text-white p-3 md:p-4 rounded-2xl md:rounded-3xl font-black transition-all border border-white/10 shadow-xl"
-                    title="সিকিউরিটি সেটিংস"
-                  >
-                    <Lock className="w-5 h-5 text-[var(--color-accent)]" />
-                  </button>
+                  {isOwnProfile && (
+                    <>
+                      <button 
+                        onClick={() => setIsEditModalOpen(true)}
+                        className="bg-white/5 hover:bg-[var(--color-accent)] hover:text-[var(--color-navy-deep)] text-white px-6 md:px-8 py-3 md:py-4 rounded-2xl md:rounded-3xl font-black flex items-center gap-3 transition-all border border-white/10 hover:border-transparent group shadow-xl"
+                      >
+                        <Edit2 className="w-5 h-5 transition-transform group-hover:rotate-12" />
+                        <span>এডিট প্রোফাইল</span>
+                      </button>
+                      <button 
+                        onClick={() => setIsPinModalOpen(true)}
+                        className="bg-white/5 hover:bg-white/10 text-white p-3 md:p-4 rounded-2xl md:rounded-3xl font-black transition-all border border-white/10 shadow-xl"
+                        title="সিকিউরিটি সেটিংস"
+                      >
+                        <Lock className="w-5 h-5 text-[var(--color-accent)]" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -790,7 +853,7 @@ export default function App() {
               {/* Stats Bento Box */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="glass-card p-6 rounded-[2rem] flex flex-col items-center justify-center text-center group hover:bg-white/5 transition-colors border border-white/5">
-                  <div className="text-3xl md:text-4xl font-black text-white mb-1 group-hover:scale-110 transition-transform">{posts.filter(p => p.author.name === userProfile.name).length}</div>
+                  <div className="text-3xl md:text-4xl font-black text-white mb-1 group-hover:scale-110 transition-transform">{posts.filter(p => p.author.name === displayProfile.name).length}</div>
                   <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest opacity-60">পোস্টসমূহ</div>
                 </div>
                 <div className="glass-card p-6 rounded-[2rem] flex flex-col items-center justify-center text-center group hover:bg-white/5 transition-colors border border-white/5">
@@ -820,7 +883,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">কর্মক্ষেত্র</div>
-                      <div className="text-white font-bold">{userProfile.work}</div>
+                      <div className="text-white font-bold">{displayProfile.work}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-4 group">
@@ -829,7 +892,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">শিক্ষা</div>
-                      <div className="text-white font-bold">{userProfile.education}</div>
+                      <div className="text-white font-bold">{displayProfile.education}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-4 group">
@@ -838,7 +901,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">অবস্থান</div>
-                      <div className="text-white font-bold">{userProfile.location}</div>
+                      <div className="text-white font-bold">{displayProfile.location}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-4 group">
@@ -847,7 +910,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">জেন্ডার</div>
-                      <div className="text-white font-bold">{userProfile.gender}</div>
+                      <div className="text-white font-bold">{displayProfile.gender}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-4 group">
@@ -856,7 +919,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">বার্থডে</div>
-                      <div className="text-white font-bold">{userProfile.birthday}</div>
+                      <div className="text-white font-bold">{displayProfile.birthday}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-4 group">
@@ -865,7 +928,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">সম্পর্ক</div>
-                      <div className="text-white font-bold">{userProfile.relationship}</div>
+                      <div className="text-white font-bold">{displayProfile.relationship}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-4 group">
@@ -874,7 +937,7 @@ export default function App() {
                     </div>
                     <div>
                       <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-1 opacity-50">যোগাযোগ</div>
-                      <div className="text-white font-bold">{userProfile.contact}</div>
+                      <div className="text-white font-bold">{displayProfile.contact}</div>
                     </div>
                   </div>
                 </div>
@@ -889,6 +952,34 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Wallet Dashboard */}
+              {isOwnProfile && (
+                <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-black text-white tracking-tight">ওয়ালেট ড্যাশবোর্ড</h2>
+                    <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center">
+                      <Wallet className="w-4 h-4 text-[var(--color-accent)]" />
+                    </div>
+                  </div>
+                  <div className="bg-[var(--color-navy-deep)] p-6 rounded-[2rem] border border-white/5 text-center">
+                    <div className="text-[10px] font-black text-[var(--color-accent)] uppercase tracking-widest mb-2 opacity-50">বর্তমান ব্যালেন্স</div>
+                    <div className="text-4xl md:text-5xl font-black text-white mb-4">৳{userProfile.walletBalance.toFixed(2)}</div>
+                    <p className="text-xs text-[var(--color-text-dim)] mb-6">প্রতিটি পোস্টের জন্য ৳০.১০ যোগ হচ্ছে</p>
+                    
+                    <button 
+                      onClick={() => setIsCashOutModalOpen(true)}
+                      disabled={userProfile.walletBalance < 100}
+                      className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent)]/90 text-[var(--color-navy-deep)] py-3 rounded-2xl font-black transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ক্যাশ আউট করুন
+                    </button>
+                    {userProfile.walletBalance < 100 && (
+                      <p className="text-[10px] text-red-400 mt-3 font-bold">ক্যাশ আউট করতে ন্যূনতম ৳১০০ প্রয়োজন</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Right Column - Feed */}
@@ -917,12 +1008,12 @@ export default function App() {
 
               {/* Post Feed */}
               <div className="space-y-6">
-                {posts.filter(p => p.author.name === userProfile.name).length > 0 ? (
-                  posts.filter(p => p.author.name === userProfile.name).map((post) => (
+                {posts.filter(p => p.author.name === displayProfile.name).length > 0 ? (
+                  posts.filter(p => p.author.name === displayProfile.name).map((post) => (
                     <PostCard 
                       key={post.id} 
                       post={post} 
-                      onLike={() => handleLike(post.id)} 
+                      onLike={() => handleLike(post)} 
                       onComment={(content) => handleComment(post.id, content)}
                       onShare={() => handleShare(post)}
                       onDelete={() => handleDeletePost(post.id)}
@@ -930,8 +1021,10 @@ export default function App() {
                         setEditingPost(post);
                         setEditContent(post.content);
                       }}
+                      onProfileClick={() => handleProfileClick(post.author)}
                       userAvatar={userProfile.avatar}
-                      isAuthor={true}
+                      isAuthor={isOwnProfile}
+                      currentUserName={userProfile.name}
                     />
                   ))
                 ) : (
@@ -1378,6 +1471,82 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Cash Out Modal */}
+      <AnimatePresence>
+        {isCashOutModalOpen && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="glass-card w-full max-w-md p-8 rounded-[2.5rem] border-white/10"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-white">ক্যাশ আউট রিকোয়েস্ট</h2>
+                <button onClick={() => setIsCashOutModalOpen(false)} className="text-[var(--color-text-dim)] hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/10 text-center">
+                  <div className="text-sm text-[var(--color-text-dim)] mb-1">উত্তোলনযোগ্য ব্যালেন্স</div>
+                  <div className="text-3xl font-black text-[var(--color-accent)]">৳{userProfile.walletBalance.toFixed(2)}</div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block text-sm font-bold text-white">পেমেন্ট মেথড নির্বাচন করুন</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {['bkash', 'nagad', 'rocket'].map((method) => (
+                      <button
+                        key={method}
+                        onClick={() => setCashOutMethod(method as any)}
+                        className={cn(
+                          "py-3 rounded-xl font-bold text-sm transition-all border",
+                          cashOutMethod === method 
+                            ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)] text-[var(--color-accent)]" 
+                            : "bg-white/5 border-white/10 text-white hover:bg-white/10"
+                        )}
+                      >
+                        {method === 'bkash' ? 'বিকাশ' : method === 'nagad' ? 'নগদ' : 'রকেট'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block text-sm font-bold text-white">অ্যাকাউন্ট নাম্বার</label>
+                  <input 
+                    type="tel" 
+                    value={cashOutPhone}
+                    onChange={(e) => setCashOutPhone(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:outline-none focus:border-[var(--color-accent)]/50 transition-all"
+                    placeholder="01XXXXXXXXX"
+                  />
+                </div>
+
+                <button 
+                  onClick={() => {
+                    if (!cashOutPhone || cashOutPhone.length < 11) {
+                      alert("সঠিক মোবাইল নাম্বার দিন।");
+                      return;
+                    }
+                    alert(`আপনার ৳${userProfile.walletBalance.toFixed(2)} ক্যাশ আউট রিকোয়েস্ট সফলভাবে সাবমিট হয়েছে। 24 ঘন্টার মধ্যে আপনার ${cashOutMethod === 'bkash' ? 'বিকাশ' : cashOutMethod === 'nagad' ? 'নগদ' : 'রকেট'} নাম্বারে টাকা পৌঁছে যাবে।`);
+                    setUserProfile(prev => ({ ...prev, walletBalance: 0 }));
+                    setIsCashOutModalOpen(false);
+                    setCashOutPhone("");
+                  }}
+                  disabled={!cashOutPhone || userProfile.walletBalance < 100}
+                  className="w-full bg-[var(--color-accent)] text-[var(--color-navy-deep)] py-4 rounded-xl font-bold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+                >
+                  রিকোয়েস্ট সাবমিট করুন
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Edit Post Modal */}
       <AnimatePresence>
         {editingPost && (
@@ -1422,31 +1591,36 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+  </ErrorBoundary>
   );
 }
 
-function PostCard({ post, onLike, onComment, onShare, onDelete, onEdit, userAvatar, isAuthor }: { 
+function PostCard({ post, onLike, onComment, onShare, onDelete, onEdit, onProfileClick, userAvatar, isAuthor, currentUserName }: { 
   post: Post, 
   onLike: () => void, 
   onComment: (content: string) => void,
   onShare: () => void,
   onDelete: () => void,
   onEdit: () => void,
+  onProfileClick: () => void,
   userAvatar: string,
-  isAuthor: boolean
+  isAuthor: boolean,
+  currentUserName: string
 }) {
   const [commentInput, setCommentInput] = useState("");
   const [showComments, setShowComments] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  
+  const isLiked = post.likedBy && post.likedBy.includes(currentUserName);
 
   return (
     <div className="glass-card rounded-2xl md:rounded-3xl overflow-hidden border-white/5 hover:border-[var(--color-accent)]/20 transition-all group">
       <div className="p-4 md:p-6 flex items-center justify-between">
         <div className="flex gap-3 md:gap-4">
-          <img src={post.author.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl object-cover border border-white/10" />
+          <img src={post.author.avatar} onClick={onProfileClick} className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl object-cover border border-white/10 cursor-pointer" />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-white hover:text-[var(--color-accent)] cursor-pointer transition-colors text-sm md:text-base">{post.author.name}</span>
+              <span onClick={onProfileClick} className="font-bold text-white hover:text-[var(--color-accent)] cursor-pointer transition-colors text-sm md:text-base">{post.author.name}</span>
               {post.author.isAI && (
                 <div className="bg-[var(--color-accent)]/10 text-[var(--color-accent)] text-[8px] md:text-[10px] px-1.5 md:px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">এআই</div>
               )}
@@ -1556,9 +1730,9 @@ function PostCard({ post, onLike, onComment, onShare, onDelete, onEdit, userAvat
 
       <div className="px-2 md:px-4 py-1.5 md:py-2 flex items-center justify-around bg-black/20">
         <FeedAction 
-          active={post.isLiked}
+          active={isLiked}
           onClick={onLike}
-          icon={<ThumbsUp className={cn("w-4 h-4 md:w-5 md:h-5", post.isLiked && "text-[var(--color-accent)] fill-[var(--color-accent)]")} />} 
+          icon={<ThumbsUp className={cn("w-4 h-4 md:w-5 md:h-5", isLiked && "text-[var(--color-accent)] fill-[var(--color-accent)]")} />} 
           label="লাইক" 
         />
         <FeedAction 
@@ -1612,7 +1786,7 @@ function PostCard({ post, onLike, onComment, onShare, onDelete, onEdit, userAvat
         </div>
       )}
     </div>
-  );
+);
 }
 function FeedAction({ icon, label, onClick, active }: { icon: React.ReactNode, label: string, onClick?: () => void, active?: boolean }) {
   return (
