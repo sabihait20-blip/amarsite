@@ -260,7 +260,7 @@ export default function App() {
   const [editContent, setEditContent] = useState("");
 
   const handlePost = async () => {
-    if (!input.trim() || isLoading || !db) return;
+    if (!input.trim() || isLoading) return;
 
     setIsLoading(true);
     const userPost = {
@@ -274,70 +274,102 @@ export default function App() {
       },
       likes: 0,
       isLiked: false,
+      likedBy: [],
       comments: [],
       image: postImage || null,
       link: postLink || null,
     };
 
-    await addDoc(collection(db, "posts"), userPost);
-    
-    // ... (rest of the code)
-    setUserProfile((prev) => ({ ...prev, walletBalance: prev.walletBalance + 0.10 }));
-    setInput("");
-    setPostImage("");
-    setPostLink("");
-    setShowLinkInput(false);
-    
-    // Don't await the AI part to keep UI responsive
-    (async () => {
-      try {
-        const chat = getAi().chats.create({
-          model: "gemini-3.1-pro-preview",
-          config: {
-            systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীদের সাথে বন্ধুত্বপূর্ণ এবং কমিউনিটি-ভিত্তিক উপায়ে কথা বলেন। আপনার উত্তরগুলো সোশ্যাল মিডিয়া পোস্টের মতো হওয়া উচিত। ফরম্যাটিংয়ের জন্য মার্কডাউন ব্যবহার করুন। অবশ্যই বাংলা ভাষায় উত্তর দেবেন। আপনি ব্যবহারকারীর পোস্টের সাথে সম্পর্কিত বাংলাদেশের জাতীয় পত্রিকার নিউজ এবং অরিজিনাল নিউজের লিঙ্ক প্রদান করবেন।",
-          },
-        });
-
-        const response = await chat.sendMessage({ message: userPost.content });
-        
-        const aiPost = {
-          role: "model",
-          content: response.text || "দুঃখিত, আমি কোনো উত্তর তৈরি করতে পারিনি।",
-          timestamp: Date.now() + 1000,
-          author: {
-            name: "Amarsite AI",
-            avatar: "https://picsum.photos/seed/gemini/100/100",
-            isAI: true,
-          },
-          likes: Math.floor(Math.random() * 100),
-          isLiked: false,
-          comments: [],
-        };
-        await addDoc(collection(db, "posts"), aiPost);
-      } catch (error) {
-        console.error("Chat error:", error);
-      } finally {
-        setIsLoading(false);
+    try {
+      if (db) {
+        await addDoc(collection(db, "posts"), userPost);
+      } else {
+        const localPost = { ...userPost, id: Math.random().toString(36).substr(2, 9) } as Post;
+        setPosts(prev => [localPost, ...prev]);
       }
-    })();
+      
+      setUserProfile((prev) => ({ ...prev, walletBalance: prev.walletBalance + 0.10 }));
+      setInput("");
+      setPostImage("");
+      setPostLink("");
+      setShowLinkInput(false);
+      
+      // Don't await the AI part to keep UI responsive
+      (async () => {
+        try {
+          const chat = getAi().chats.create({
+            model: "gemini-3.1-pro-preview",
+            config: {
+              systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীদের সাথে বন্ধুত্বপূর্ণ এবং কমিউনিটি-ভিত্তিক উপায়ে কথা বলেন। আপনার উত্তরগুলো সোশ্যাল মিডিয়া পোস্টের মতো হওয়া উচিত। ফরম্যাটিংয়ের জন্য মার্কডাউন ব্যবহার করুন। অবশ্যই বাংলা ভাষায় উত্তর দেবেন। আপনি ব্যবহারকারীর পোস্টের সাথে সম্পর্কিত বাংলাদেশের জাতীয় পত্রিকার নিউজ এবং অরিজিনাল নিউজের লিঙ্ক প্রদান করবেন।",
+            },
+          });
+
+          const response = await chat.sendMessage({ message: userPost.content });
+          
+          const aiPost = {
+            role: "model",
+            content: response.text || "দুঃখিত, আমি কোনো উত্তর তৈরি করতে পারিনি।",
+            timestamp: Date.now() + 1000,
+            author: {
+              name: "Amarsite AI",
+              avatar: "https://picsum.photos/seed/gemini/100/100",
+              isAI: true,
+            },
+            likes: Math.floor(Math.random() * 100),
+            isLiked: false,
+            likedBy: [],
+            comments: [],
+          };
+          
+          if (db) {
+            await addDoc(collection(db, "posts"), aiPost);
+          } else {
+            const localAiPost = { ...aiPost, id: Math.random().toString(36).substr(2, 9) } as Post;
+            setPosts(prev => [localAiPost, ...prev].sort((a, b) => b.timestamp - a.timestamp));
+          }
+        } catch (error) {
+          console.error("Chat error:", error);
+        }
+      })();
+    } catch (error) {
+      console.error("Post error:", error);
+      alert("পোস্ট করতে সমস্যা হয়েছে। দয়া করে ফায়ারবেস কনফিগারেশন চেক করুন।");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleLike = async (post: Post) => {
-    if (!db || !isLoggedIn) return;
-    const postRef = doc(db, "posts", post.id);
+    if (!isLoggedIn) return;
     const likedBy = post.likedBy || [];
     const isLiked = likedBy.includes(userProfile.name);
     
-    await updateDoc(postRef, {
-      likes: isLiked ? post.likes - 1 : post.likes + 1,
-      likedBy: isLiked 
-        ? likedBy.filter(name => name !== userProfile.name)
-        : [...likedBy, userProfile.name]
-    });
+    const newLikes = isLiked ? post.likes - 1 : post.likes + 1;
+    const newLikedBy = isLiked 
+      ? likedBy.filter(name => name !== userProfile.name)
+      : [...likedBy, userProfile.name];
+
+    if (db) {
+      try {
+        const postRef = doc(db, "posts", post.id);
+        await updateDoc(postRef, {
+          likes: newLikes,
+          likedBy: newLikedBy
+        });
+      } catch (error) {
+        console.error("Like error:", error);
+      }
+    } else {
+      setPosts(prev => prev.map(p => 
+        p.id === post.id 
+          ? { ...p, likes: newLikes, likedBy: newLikedBy }
+          : p
+      ));
+    }
   };
 
   const handleComment = async (postId: string, content: string) => {
-    if (!content.trim() || !db) return;
+    if (!content.trim()) return;
     const newComment: Comment = {
       id: Math.random().toString(36).substr(2, 9),
       author: userProfile.name,
@@ -345,10 +377,23 @@ export default function App() {
       content: content.trim(),
       timestamp: Date.now()
     };
-    const postRef = doc(db, "posts", postId);
-    await updateDoc(postRef, {
-      comments: arrayUnion(newComment)
-    });
+    
+    if (db) {
+      try {
+        const postRef = doc(db, "posts", postId);
+        await updateDoc(postRef, {
+          comments: arrayUnion(newComment)
+        });
+      } catch (error) {
+        console.error("Comment error:", error);
+      }
+    } else {
+      setPosts(prev => prev.map(p => 
+        p.id === postId 
+          ? { ...p, comments: [...(p.comments || []), newComment] }
+          : p
+      ));
+    }
 
     // AI Reply System
     const post = posts.find(p => p.id === postId);
@@ -371,9 +416,19 @@ export default function App() {
             content: response.text || "ধন্যবাদ আপনার মন্তব্যের জন্য!",
             timestamp: Date.now()
           };
-          await updateDoc(postRef, {
-            comments: arrayUnion(aiReply)
-          });
+          
+          if (db) {
+            const postRef = doc(db, "posts", postId);
+            await updateDoc(postRef, {
+              comments: arrayUnion(aiReply)
+            });
+          } else {
+            setPosts(prev => prev.map(p => 
+              p.id === postId 
+                ? { ...p, comments: [...(p.comments || []), aiReply] }
+                : p
+            ));
+          }
         } catch (error) {
           console.error("AI Reply error:", error);
         }
@@ -395,16 +450,36 @@ export default function App() {
   };
 
   const handleDeletePost = async (postId: string) => {
-    if (!db) return;
     if (window.confirm("আপনি কি নিশ্চিত যে আপনি এই পোস্টটি মুছে ফেলতে চান?")) {
-      await deleteDoc(doc(db, "posts", postId));
+      if (db) {
+        try {
+          await deleteDoc(doc(db, "posts", postId));
+        } catch (error) {
+          console.error("Delete error:", error);
+        }
+      } else {
+        setPosts(prev => prev.filter(p => p.id !== postId));
+      }
     }
   };
 
   const handleUpdatePost = async () => {
-    if (!editingPost || !editContent.trim() || !db) return;
-    const postRef = doc(db, "posts", editingPost.id);
-    await updateDoc(postRef, { content: editContent });
+    if (!editingPost || !editContent.trim()) return;
+    
+    if (db) {
+      try {
+        const postRef = doc(db, "posts", editingPost.id);
+        await updateDoc(postRef, { content: editContent });
+      } catch (error) {
+        console.error("Update error:", error);
+      }
+    } else {
+      setPosts(prev => prev.map(p => 
+        p.id === editingPost.id 
+          ? { ...p, content: editContent }
+          : p
+      ));
+    }
     setEditingPost(null);
     setEditContent("");
   };
