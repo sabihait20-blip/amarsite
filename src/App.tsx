@@ -295,6 +295,10 @@ export default function App() {
   };
 
   const handlePost = async () => {
+    if (!user.isLoggedIn) {
+      openAuthModal("login");
+      return;
+    }
     if (!postContent.trim() && !postImage) return;
     
     setIsLoading(true);
@@ -671,18 +675,22 @@ export default function App() {
     return (
       <div className="space-y-6 max-w-2xl mx-auto pb-24 lg:pb-8" ref={feedRef}>
         {/* Create Post Trigger */}
-        {user.isLoggedIn && (
-          <div 
-            onClick={() => setIsPostModalOpen(true)}
-            className="glass-card p-4 rounded-2xl flex items-center gap-4 cursor-pointer group"
-          >
-            <img src={user.avatar} className="w-10 h-10 rounded-full border border-white/10" alt="avatar" />
-            <div className="flex-1 bg-white/5 rounded-full px-6 py-2.5 text-slate-400 group-hover:bg-white/10 transition-all">
-              আপনার চিন্তা শেয়ার করুন...
-            </div>
-            <PlusCircle className="text-[var(--color-accent)] w-6 h-6" />
+        <div 
+          onClick={() => {
+            if (user.isLoggedIn) {
+              setIsPostModalOpen(true);
+            } else {
+              openAuthModal("login");
+            }
+          }}
+          className="glass-card p-4 rounded-2xl flex items-center gap-4 cursor-pointer group"
+        >
+          <img src={user.avatar} className="w-10 h-10 rounded-full border border-white/10" alt="avatar" />
+          <div className="flex-1 bg-white/5 rounded-full px-6 py-2.5 text-slate-400 group-hover:bg-white/10 transition-all">
+            আপনার চিন্তা শেয়ার করুন...
           </div>
-        )}
+          <PlusCircle className="text-[var(--color-accent)] w-6 h-6" />
+        </div>
 
         {/* Search Bar (Desktop) */}
         <div className="hidden lg:block relative group">
