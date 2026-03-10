@@ -133,10 +133,7 @@ export default function App() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [posts, setPosts] = useState<Post[]>(() => {
-    const saved = localStorage.getItem("amarsite_posts");
-    return saved ? JSON.parse(saved) : MOCK_POSTS;
-  });
+  const [posts, setPosts] = useState<Post[]>([]);
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
@@ -193,58 +190,23 @@ export default function App() {
 
   // --- Persistence ---
   useEffect(() => {
-    localStorage.setItem("amarsite_posts", JSON.stringify(posts));
-  }, [posts]);
-
-  useEffect(() => {
     localStorage.setItem("amarsite_user", JSON.stringify(user));
   }, [user]);
 
-  // --- AI Assistant Automatic Posting ---
+  // --- Fetch Posts ---
+  const fetchPosts = async () => {
+    try {
+      const res = await fetch("/api/posts");
+      const data = await res.json();
+      setPosts(data);
+    } catch (err) {
+      console.error("Failed to fetch posts:", err);
+    }
+  };
+
   useEffect(() => {
-    let errorCount = 0;
-    const interval = setInterval(async () => {
-      if (errorCount > 2) {
-        console.log("AI Posting disabled due to repeated errors.");
-        clearInterval(interval);
-        return;
-      }
-
-      try {
-        const content = await generateAIPost();
-        if (content) {
-          const aiPost: Post = {
-            id: Date.now().toString(),
-            author: {
-              name: "AI Assistant",
-              username: "ai_bot",
-              avatar: "https://picsum.photos/seed/bot/100/100",
-              isAI: true
-            },
-            content,
-            likes: Math.floor(Math.random() * 10),
-            isLiked: false,
-            comments: [],
-            timestamp: Date.now()
-          };
-          setPosts(prev => [aiPost, ...prev]);
-          setNotifications(prev => [{
-            id: Date.now().toString(),
-            type: "post",
-            author: "AI Assistant",
-            postId: aiPost.id,
-            timestamp: Date.now(),
-            read: false
-          }, ...prev]);
-          errorCount = 0; // Reset on success
-        } else {
-          errorCount++;
-        }
-      } catch (err) {
-        errorCount++;
-      }
-    }, 300000); // Every 5 minutes instead of 2
-
+    fetchPosts();
+    const interval = setInterval(fetchPosts, 30000); // Poll every 30 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -254,7 +216,7 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
-  const handleAuth = () => {
+  const handleAuth = async () => {
     if (authMode === "register" && (!authInputs.name || !authInputs.username)) {
       alert("দয়া করে সব তথ্য পূরণ করুন।");
       return;
@@ -265,26 +227,40 @@ export default function App() {
     }
 
     setIsLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-      const newUser: UserProfile = {
-        name: authMode === "register" ? authInputs.name : "User",
-        username: authMode === "register" ? authInputs.username.toLowerCase().replace(/\s+/g, "_") : authInputs.email.split("@")[0],
-        avatar: `https://picsum.photos/seed/${authInputs.username || authInputs.email}/100/100`,
-        walletBalance: authMode === "register" ? 0 : 15.50,
-        isLoggedIn: true,
-        followersCount: 0,
-        followingCount: 0,
-        isVerified: false
-      };
-      setUser(newUser);
-      setIsAuthModalOpen(false);
-      setIsLoading(false);
-      setAuthInputs({ name: "", username: "", email: "", password: "" });
-      if (authMode === "register") {
-        alert("নিবন্ধন সফল হয়েছে! স্বাগতম Amarsite-এ।");
+    try {
+      const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authInputs)
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        const userData = {
+          name: data.user.name,
+          username: data.user.username,
+          avatar: data.user.avatar,
+          walletBalance: data.user.wallet_balance,
+          isLoggedIn: true,
+          followersCount: data.user.followers_count,
+          followingCount: data.user.following_count,
+          isVerified: !!data.user.is_verified
+        };
+        setUser(userData);
+        setIsAuthModalOpen(false);
+        setAuthInputs({ name: "", username: "", email: "", password: "" });
+        if (authMode === "register") {
+          alert("নিবন্ধন সফল হয়েছে! স্বাগতম Amarsite-এ।");
+        }
+      } else {
+        alert(data.message || "Authentication failed");
       }
-    }, 1000);
+    } catch (err) {
+      alert("Something went wrong. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -323,42 +299,35 @@ export default function App() {
     if (!postContent.trim() && !postImage) return;
     
     setIsLoading(true);
-    
-    if (editingPost) {
-      setPosts(prev => prev.map(p => p.id === editingPost.id ? { ...p, content: postContent, image: postImage || p.image } : p));
-      setEditingPost(null);
-    } else {
-      const newPost: Post = {
-        id: Date.now().toString(),
-        author: {
-          name: user.name,
-          username: user.username,
-          avatar: user.avatar
-        },
-        content: postContent,
-        image: postImage || undefined,
-        likes: 0,
-        isLiked: false,
-        comments: [],
-        timestamp: Date.now()
-      };
-      
-      setPosts([newPost, ...posts]);
-      setNotifications(prev => [{
-        id: Date.now().toString(),
-        type: "post",
-        author: user.name,
-        postId: newPost.id,
-        timestamp: Date.now(),
-        read: false
-      }, ...prev]);
-      setUser(prev => ({ ...prev, walletBalance: prev.walletBalance + 0.10 }));
+    try {
+      if (editingPost) {
+        // Edit logic could be added here
+        setPosts(prev => prev.map(p => p.id === editingPost.id ? { ...p, content: postContent, image: postImage || p.image } : p));
+        setEditingPost(null);
+      } else {
+        const res = await fetch("/api/posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            author_username: user.username,
+            content: postContent,
+            image: postImage
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          await fetchPosts();
+          setUser(prev => ({ ...prev, walletBalance: prev.walletBalance + 0.10 }));
+        }
+      }
+      setPostContent("");
+      setPostImage(null);
+      setIsPostModalOpen(false);
+    } catch (err) {
+      alert("Failed to create post");
+    } finally {
+      setIsLoading(false);
     }
-    
-    setPostContent("");
-    setPostImage(null);
-    setIsPostModalOpen(false);
-    setIsLoading(false);
   };
 
   const handleDeletePost = (postId: string) => {
@@ -538,7 +507,7 @@ export default function App() {
     setActiveTab("messages");
   };
 
-  const handleAddComment = (postId: string) => {
+  const handleAddComment = async (postId: string) => {
     if (!user.isLoggedIn) {
       openAuthModal("login");
       return;
@@ -547,29 +516,23 @@ export default function App() {
     const text = commentInputs[postId];
     if (!text?.trim()) return;
 
-    const newComment: Comment = {
-      id: Date.now().toString(),
-      author: {
-        name: user.name,
-        username: user.username,
-        avatar: user.avatar
-      },
-      text,
-      timestamp: Date.now(),
-      replies: []
-    };
-
-    setPosts(prev => prev.map(post => {
-      if (post.id === postId) {
-        return {
-          ...post,
-          comments: [newComment, ...post.comments]
-        };
+    try {
+      const res = await fetch(`/api/posts/${postId}/comment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          author_username: user.username,
+          text
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchPosts();
+        setCommentInputs(prev => ({ ...prev, [postId]: "" }));
       }
-      return post;
-    }));
-
-    setCommentInputs(prev => ({ ...prev, [postId]: "" }));
+    } catch (err) {
+      alert("Failed to add comment");
+    }
   };
 
   const handleAddReply = (postId: string, commentId: string) => {
