@@ -188,7 +188,7 @@ export default function App() {
 
   const handleAuth = async () => {
     if (authMode === "register" && (!authInputs.name || !authInputs.username)) {
-      alert("দয়া করে সব তথ্য পূরণ করুন।");
+      alert("দয়া করে সব তথ্য পূরণ করা বাধ্যতামূলক।");
       return;
     }
     if (!authInputs.email || !authInputs.password) {
@@ -204,7 +204,13 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(authInputs)
       });
-      const data = await res.json();
+      
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error("সার্ভার থেকে সঠিক রেসপন্স পাওয়া যায়নি।");
+      }
       
       if (data.success && data.user) {
         const userData = {
@@ -224,10 +230,11 @@ export default function App() {
           alert("নিবন্ধন সফল হয়েছে! স্বাগতম Amarsite-এ।");
         }
       } else {
-        alert(data.message || "Authentication failed");
+        alert(data.message || "লগইন বা রেজিস্ট্রেশন ব্যর্থ হয়েছে।");
       }
-    } catch (err) {
-      alert("Something went wrong. Please try again.");
+    } catch (err: any) {
+      console.error("Auth error:", err);
+      alert(err.message || "সংযোগ বিচ্ছিন্ন হয়েছে। দয়া করে ইন্টারনেট কানেকশন চেক করুন এবং আবার চেষ্টা করুন।");
     } finally {
       setIsLoading(false);
     }
