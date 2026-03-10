@@ -1,35 +1,33 @@
 import { GoogleGenAI } from "@google/genai";
 
-let aiClient: GoogleGenAI | null = null;
-
-export function getAi(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable is required");
-    }
-    aiClient = new GoogleGenAI({ apiKey });
+export const getAi = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not defined");
   }
-  return aiClient;
-}
+  return new GoogleGenAI({ apiKey });
+};
 
-export const chatModel = "gemini-3.1-pro-preview";
+export const generateAIPost = async (topic?: string) => {
+  try {
+    const ai = getAi();
+    const model = "gemini-3-flash-preview";
+    
+    const prompt = topic 
+      ? `Create a short, engaging social media post in Bengali about "${topic}". Use emojis and markdown formatting.`
+      : `Create a short, engaging social media post in Bengali about a trending topic in Bangladesh. Use emojis and markdown formatting.`;
 
-export interface Message {
-  role: "user" | "model";
-  content: string;
-  timestamp: number;
-}
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        systemInstruction: "You are a friendly AI Assistant for a social media platform called Amarsite. Your goal is to keep the community engaged with interesting posts.",
+      }
+    });
 
-export async function sendMessage(message: string, history: Message[]) {
-  const ai = getAi();
-  const chat = ai.chats.create({
-    model: chatModel,
-    config: {
-      systemInstruction: "আপনি Amarsite AI। আপনি ব্যবহারকারীদের সাথে বন্ধুত্বপূর্ণ এবং কমিউনিটি-ভিত্তিক উপায়ে কথা বলেন। আপনার উত্তরগুলো সোশ্যাল মিডিয়া পোস্টের মতো হওয়া উচিত। ফরম্যাটিংয়ের জন্য মার্কডাউন ব্যবহার করুন। অবশ্যই বাংলা ভাষায় উত্তর দেবেন।",
-    },
-  });
-  
-  const response = await chat.sendMessage({ message });
-  return response.text;
-}
+    return response.text;
+  } catch (error) {
+    console.error("Error generating AI post:", error);
+    return null;
+  }
+};
