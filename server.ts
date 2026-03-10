@@ -6,7 +6,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database("amarsite.db");
+const db = new Database("amarsite.db", { verbose: console.log });
+// Disable WAL for now to see if it's a filesystem compatibility issue
+db.pragma("journal_mode = DELETE");
 
 // Initialize Database
 db.exec(`
@@ -50,6 +52,12 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  // Connectivity Test Route
+  app.get("/api/ping", (req, res) => {
+    res.json({ success: true, message: "Pong!", timestamp: Date.now() });
+  });
 
   // API routes
   app.get("/api/health", (req, res) => {
@@ -58,72 +66,98 @@ async function startServer() {
 
   // Auth Routes
   app.post("/api/auth/register", (req, res) => {
+    console.log("--- Registration Attempt ---");
+    console.log("Email:", req.body.email);
+    console.log("Username:", req.body.username);
+    
     const { name, username, email, password } = req.body;
     
     if (!name || !username || !email || !password) {
+      console.log("Registration failed: Missing fields");
       return res.status(400).json({ success: false, message: "সব তথ্য পূরণ করা বাধ্যতামূলক" });
     }
 
     try {
+      console.log("Database: Inserting user...");
       const avatar = `https://picsum.photos/seed/${username}/100/100`;
       const stmt = db.prepare("INSERT INTO users (name, username, email, password, avatar) VALUES (?, ?, ?, ?, ?)");
       stmt.run(name, username.toLowerCase().trim(), email.toLowerCase().trim(), password, avatar);
+      console.log("Database: User inserted successfully");
       
+      console.log("Database: Fetching new user...");
       const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username.toLowerCase().trim());
-      console.log(`New user registered: ${username}`);
+      console.log("Database: User fetched successfully");
+      
       res.json({ success: true, user: { ...user, isLoggedIn: true } });
     } catch (error: any) {
-      console.error("Registration error:", error);
+      console.error("Registration error details:", error);
       if (error.code === 'SQLITE_CONSTRAINT') {
         res.status(400).json({ success: false, message: "এই ইউজারনেম বা ইমেইল ইতিমধ্যে ব্যবহার করা হয়েছে" });
       } else {
-        res.status(500).json({ success: false, message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
+        res.status(500).json({ success: false, message: "সার্ভারে সমস্যা হয়েছে (DB Error), আবার চেষ্টা করুন" });
       }
     }
   });
 
   app.post("/api/auth/login", (req, res) => {
+    console.log("--- Login Attempt ---");
+    console.log("Email:", req.body.email);
+    
     const { email, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE email = ? AND password = ?").get(email, password);
-    if (user) {
-      res.json({ success: true, user: { ...user, isLoggedIn: true } });
-    } else {
-      res.status(401).json({ success: false, message: "Invalid credentials" });
+    try {
+      const user = db.prepare("SELECT * FROM users WHERE email = ? AND password = ?").get(email, password);
+      if (user) {
+        console.log("Login successful:", email);
+        res.json({ success: true, user: { ...user, isLoggedIn: true } });
+      } else {
+        console.log("Login failed: Invalid credentials for", email);
+        res.status(401).json({ success: false, message: "ইমেইল বা পাসওয়ার্ড সঠিক নয়" });
+      }
+    } catch (error) {
+      console.error("Login DB error:", error);
+      res.status(500).json({ success: false, message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
     }
   });
 
   // Post Routes
   app.get("/api/posts", (req, res) => {
-    const posts = db.prepare(`
-      SELECT p.*, u.name as author_name, u.avatar as author_avatar 
-      FROM posts p 
-      JOIN users u ON p.author_username = u.username 
-      ORDER BY p.timestamp DESC
-    `).all();
+    console.log("GET /api/posts request received");
+    try {
+      const posts = db.prepare(`
+        SELECT p.*, u.name as author_name, u.avatar as author_avatar 
+        FROM posts p 
+        JOIN users u ON p.author_username = u.username 
+        ORDER BY p.timestamp DESC
+      `).all();
+      console.log(`Found ${posts.length} posts`);
 
-    const formattedPosts = posts.map((p: any) => ({
-      id: p.id.toString(),
-      author: {
-        name: p.author_name,
-        username: p.author_username,
-        avatar: p.author_avatar,
-        isAI: p.author_username === 'ai_bot'
-      },
-      content: p.content,
-      image: p.image,
-      likes: p.likes,
-      isLiked: false,
-      timestamp: p.timestamp,
-      comments: db.prepare("SELECT c.*, u.name as author_name, u.avatar as author_avatar FROM comments c JOIN users u ON c.author_username = u.username WHERE post_id = ?").all(p.id).map((c: any) => ({
-        id: c.id.toString(),
-        author: { name: c.author_name, username: c.author_username, avatar: c.author_avatar },
-        text: c.text,
-        timestamp: c.timestamp,
-        replies: []
-      }))
-    }));
+      const formattedPosts = posts.map((p: any) => ({
+        id: p.id.toString(),
+        author: {
+          name: p.author_name,
+          username: p.author_username,
+          avatar: p.author_avatar,
+          isAI: p.author_username === 'ai_bot'
+        },
+        content: p.content,
+        image: p.image,
+        likes: p.likes,
+        isLiked: false,
+        timestamp: p.timestamp,
+        comments: db.prepare("SELECT c.*, u.name as author_name, u.avatar as author_avatar FROM comments c JOIN users u ON c.author_username = u.username WHERE post_id = ?").all(p.id).map((c: any) => ({
+          id: c.id.toString(),
+          author: { name: c.author_name, username: c.author_username, avatar: c.author_avatar },
+          text: c.text,
+          timestamp: c.timestamp,
+          replies: []
+        }))
+      }));
 
-    res.json(formattedPosts);
+      res.json(formattedPosts);
+    } catch (error) {
+      console.error("Error fetching posts:", error);
+      res.status(500).json({ success: false, message: "Internal server error" });
+    }
   });
 
   app.post("/api/posts", (req, res) => {
@@ -158,6 +192,12 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+  });
+
+  // Global Error Handler
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("Global Error Handler:", err);
+    res.status(500).json({ success: false, message: "সার্ভারে একটি অভ্যন্তরীণ ত্রুটি ঘটেছে।" });
   });
 
   // AI Assistant Automatic Posting (Server-side)

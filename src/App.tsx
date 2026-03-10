@@ -167,8 +167,15 @@ export default function App() {
   const fetchPosts = async () => {
     try {
       const res = await fetch("/api/posts");
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+      }
       const data = await res.json();
-      setPosts(data);
+      if (Array.isArray(data)) {
+        setPosts(data);
+      } else {
+        console.error("Invalid data format for posts:", data);
+      }
     } catch (err) {
       console.error("Failed to fetch posts:", err);
     }
@@ -197,6 +204,7 @@ export default function App() {
     }
 
     setIsLoading(true);
+    // Temporarily removing signal to rule out AbortController issues
     try {
       const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
       const res = await fetch(endpoint, {
@@ -205,11 +213,15 @@ export default function App() {
         body: JSON.stringify(authInputs)
       });
       
+      const contentType = res.headers.get("content-type");
       let data;
-      try {
+      
+      if (contentType && contentType.includes("application/json")) {
         data = await res.json();
-      } catch (e) {
-        throw new Error("সার্ভার থেকে সঠিক রেসপন্স পাওয়া যায়নি।");
+      } else {
+        const text = await res.text();
+        console.error("Non-JSON response:", text);
+        throw new Error(`সার্ভার থেকে ভুল রেসপন্স এসেছে (Status: ${res.status})। দয়া করে আবার চেষ্টা করুন।`);
       }
       
       if (data.success && data.user) {
@@ -234,9 +246,24 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("Auth error:", err);
-      alert(err.message || "সংযোগ বিচ্ছিন্ন হয়েছে। দয়া করে ইন্টারনেট কানেকশন চেক করুন এবং আবার চেষ্টা করুন।");
+      alert(err.message || "সংযোগ বিচ্ছিন্ন হয়েছে। দয়া করে আবার চেষ্টা করুন।");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const checkConnectivity = async () => {
+    try {
+      const res = await fetch("/api/ping");
+      const data = await res.json();
+      if (data.success) {
+        alert("সার্ভারের সাথে সংযোগ ঠিক আছে! (Pong)");
+      } else {
+        alert("সার্ভারের সাথে সংযোগে সমস্যা হচ্ছে।");
+      }
+    } catch (err) {
+      console.error("Connectivity check failed:", err);
+      alert("সার্ভারের সাথে সংযোগ করা যাচ্ছে না। দয়া করে ইন্টারনেট কানেকশন চেক করুন।");
     }
   };
 
@@ -1400,8 +1427,20 @@ export default function App() {
                     className="w-full glass-input p-4 rounded-xl text-white" 
                   />
                   
-                  <button onClick={handleAuth} className="btn-primary w-full py-4 mt-2">
+                  <button 
+                    onClick={handleAuth} 
+                    disabled={isLoading}
+                    className="btn-primary w-full py-4 mt-2 flex items-center justify-center gap-2"
+                  >
+                    {isLoading && <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                     {authMode === "login" ? "লগইন করুন" : "নিবন্ধন করুন"}
+                  </button>
+
+                  <button
+                    onClick={checkConnectivity}
+                    className="w-full text-xs text-slate-500 hover:text-slate-700 transition-colors py-1"
+                  >
+                    সার্ভার সংযোগ পরীক্ষা করুন
                   </button>
                   
                   <div className="text-slate-500 text-sm">
