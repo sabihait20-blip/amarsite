@@ -111,9 +111,9 @@ const MOCK_POSTS: Post[] = [
       {
         id: "c1",
         author: {
-          name: "Rahat Khan",
-          username: "rahat",
-          avatar: "https://picsum.photos/seed/user1/100/100"
+          name: "Admin",
+          username: "admin",
+          avatar: "https://picsum.photos/seed/admin/100/100"
         },
         text: "চমৎকার উদ্যোগ! অনেক ধন্যবাদ।",
         timestamp: Date.now() - 1800000,
@@ -121,20 +121,6 @@ const MOCK_POSTS: Post[] = [
       }
     ],
     timestamp: Date.now() - 3600000
-  },
-  {
-    id: "2",
-    author: {
-      name: "Rahat Khan",
-      username: "rahat",
-      avatar: "https://picsum.photos/seed/user1/100/100"
-    },
-    content: "আজকের আবহাওয়া খুব চমৎকার! গ্লাস-মরফিজম ডিজাইনটা সত্যিই দারুণ লাগছে। 😍",
-    image: "https://picsum.photos/seed/nature/800/400",
-    likes: 12,
-    isLiked: true,
-    comments: [],
-    timestamp: Date.now() - 7200000
   }
 ];
 
@@ -147,20 +133,31 @@ export default function App() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [posts, setPosts] = useState<Post[]>(MOCK_POSTS);
+  const [posts, setPosts] = useState<Post[]>(() => {
+    const saved = localStorage.getItem("amarsite_posts");
+    return saved ? JSON.parse(saved) : MOCK_POSTS;
+  });
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
   const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
-  const [user, setUser] = useState<UserProfile>({
-    name: "Rahat Khan",
-    username: "rahat",
-    avatar: "https://picsum.photos/seed/user1/100/100",
-    walletBalance: 15.50,
-    isLoggedIn: true,
-    isVerified: true,
-    followersCount: 124,
-    followingCount: 89
+  const [user, setUser] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem("amarsite_user");
+    return saved ? JSON.parse(saved) : {
+      name: "Guest User",
+      username: "guest",
+      avatar: "https://picsum.photos/seed/guest/100/100",
+      walletBalance: 0,
+      isLoggedIn: false,
+      followersCount: 0,
+      followingCount: 0
+    };
+  });
+  const [authInputs, setAuthInputs] = useState({
+    name: "",
+    username: "",
+    email: "",
+    password: ""
   });
   const [followingUsers, setFollowingUsers] = useState<Set<string>>(new Set(["ai_bot"]));
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([
@@ -193,6 +190,15 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   const feedRef = useRef<HTMLDivElement>(null);
+
+  // --- Persistence ---
+  useEffect(() => {
+    localStorage.setItem("amarsite_posts", JSON.stringify(posts));
+  }, [posts]);
+
+  useEffect(() => {
+    localStorage.setItem("amarsite_user", JSON.stringify(user));
+  }, [user]);
 
   // --- AI Assistant Automatic Posting ---
   useEffect(() => {
@@ -249,21 +255,32 @@ export default function App() {
   };
 
   const handleAuth = () => {
+    if (authMode === "register" && (!authInputs.name || !authInputs.username)) {
+      alert("দয়া করে সব তথ্য পূরণ করুন।");
+      return;
+    }
+    if (!authInputs.email || !authInputs.password) {
+      alert("ইমেইল এবং পাসওয়ার্ড প্রয়োজন।");
+      return;
+    }
+
     setIsLoading(true);
     // Simulate API call
     setTimeout(() => {
-      setUser({
-        name: authMode === "register" ? "New User" : "John Doe",
-        username: authMode === "register" ? "newuser" : "johndoe",
-        avatar: `https://picsum.photos/seed/${authMode === "register" ? "newuser" : "johndoe"}/100/100`,
+      const newUser: UserProfile = {
+        name: authMode === "register" ? authInputs.name : "User",
+        username: authMode === "register" ? authInputs.username.toLowerCase().replace(/\s+/g, "_") : authInputs.email.split("@")[0],
+        avatar: `https://picsum.photos/seed/${authInputs.username || authInputs.email}/100/100`,
         walletBalance: authMode === "register" ? 0 : 15.50,
         isLoggedIn: true,
         followersCount: 0,
         followingCount: 0,
         isVerified: false
-      });
+      };
+      setUser(newUser);
       setIsAuthModalOpen(false);
       setIsLoading(false);
+      setAuthInputs({ name: "", username: "", email: "", password: "" });
       if (authMode === "register") {
         alert("নিবন্ধন সফল হয়েছে! স্বাগতম Amarsite-এ।");
       }
@@ -271,16 +288,20 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    setUser({
-      name: "Guest User",
-      username: "guest",
-      avatar: "https://picsum.photos/seed/guest/100/100",
-      walletBalance: 0,
-      isLoggedIn: false,
-      followersCount: 0,
-      followingCount: 0
-    });
-    setActiveTab("feed");
+    if (window.confirm("আপনি কি নিশ্চিত যে আপনি লগ আউট করতে চান?")) {
+      const guestUser = {
+        name: "Guest User",
+        username: "guest",
+        avatar: "https://picsum.photos/seed/guest/100/100",
+        walletBalance: 0,
+        isLoggedIn: false,
+        followersCount: 0,
+        followingCount: 0
+      };
+      setUser(guestUser);
+      localStorage.removeItem("amarsite_user");
+      setActiveTab("feed");
+    }
   };
 
   const handleWithdraw = () => {
@@ -1408,12 +1429,36 @@ export default function App() {
                 <div className="space-y-3 pt-4">
                   {authMode === "register" && (
                     <>
-                      <input type="text" placeholder="পুরো নাম" className="w-full glass-input p-4 rounded-xl text-white" />
-                      <input type="tel" placeholder="ফোন নাম্বার" className="w-full glass-input p-4 rounded-xl text-white" />
+                      <input 
+                        type="text" 
+                        placeholder="পুরো নাম" 
+                        value={authInputs.name}
+                        onChange={(e) => setAuthInputs(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full glass-input p-4 rounded-xl text-white" 
+                      />
+                      <input 
+                        type="text" 
+                        placeholder="ইউজারনেম" 
+                        value={authInputs.username}
+                        onChange={(e) => setAuthInputs(prev => ({ ...prev, username: e.target.value }))}
+                        className="w-full glass-input p-4 rounded-xl text-white" 
+                      />
                     </>
                   )}
-                  <input type="email" placeholder="ইমেইল" className="w-full glass-input p-4 rounded-xl text-white" />
-                  <input type="password" placeholder="পাসওয়ার্ড" className="w-full glass-input p-4 rounded-xl text-white" />
+                  <input 
+                    type="email" 
+                    placeholder="ইমেইল" 
+                    value={authInputs.email}
+                    onChange={(e) => setAuthInputs(prev => ({ ...prev, email: e.target.value }))}
+                    className="w-full glass-input p-4 rounded-xl text-white" 
+                  />
+                  <input 
+                    type="password" 
+                    placeholder="পাসওয়ার্ড" 
+                    value={authInputs.password}
+                    onChange={(e) => setAuthInputs(prev => ({ ...prev, password: e.target.value }))}
+                    className="w-full glass-input p-4 rounded-xl text-white" 
+                  />
                   
                   <button onClick={handleAuth} className="btn-primary w-full py-4 mt-2">
                     {authMode === "login" ? "লগইন করুন" : "নিবন্ধন করুন"}
