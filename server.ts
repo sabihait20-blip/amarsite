@@ -59,15 +59,26 @@ async function startServer() {
   // Auth Routes
   app.post("/api/auth/register", (req, res) => {
     const { name, username, email, password } = req.body;
+    
+    if (!name || !username || !email || !password) {
+      return res.status(400).json({ success: false, message: "সব তথ্য পূরণ করা বাধ্যতামূলক" });
+    }
+
     try {
       const avatar = `https://picsum.photos/seed/${username}/100/100`;
       const stmt = db.prepare("INSERT INTO users (name, username, email, password, avatar) VALUES (?, ?, ?, ?, ?)");
-      stmt.run(name, username.toLowerCase(), email, password, avatar);
+      stmt.run(name, username.toLowerCase().trim(), email.toLowerCase().trim(), password, avatar);
       
-      const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username.toLowerCase());
+      const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username.toLowerCase().trim());
+      console.log(`New user registered: ${username}`);
       res.json({ success: true, user: { ...user, isLoggedIn: true } });
-    } catch (error) {
-      res.status(400).json({ success: false, message: "Username or Email already exists" });
+    } catch (error: any) {
+      console.error("Registration error:", error);
+      if (error.code === 'SQLITE_CONSTRAINT') {
+        res.status(400).json({ success: false, message: "এই ইউজারনেম বা ইমেইল ইতিমধ্যে ব্যবহার করা হয়েছে" });
+      } else {
+        res.status(500).json({ success: false, message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
+      }
     }
   });
 

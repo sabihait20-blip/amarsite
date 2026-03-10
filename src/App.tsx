@@ -94,36 +94,6 @@ interface ChatSession {
   messages: Message[];
 }
 
-// --- Mock Data (Fallback) ---
-const MOCK_POSTS: Post[] = [
-  {
-    id: "1",
-    author: {
-      name: "AI Assistant",
-      username: "ai_bot",
-      avatar: "https://picsum.photos/seed/bot/100/100",
-      isAI: true
-    },
-    content: "স্বাগতম Amarsite-এ! এখানে আপনি আপনার চিন্তা শেয়ার করে আয় করতে পারেন। প্রতি পোস্টে পাবেন ০.১০ টাকা। 🚀",
-    likes: 42,
-    isLiked: false,
-    comments: [
-      {
-        id: "c1",
-        author: {
-          name: "Admin",
-          username: "admin",
-          avatar: "https://picsum.photos/seed/admin/100/100"
-        },
-        text: "চমৎকার উদ্যোগ! অনেক ধন্যবাদ।",
-        timestamp: Date.now() - 1800000,
-        replies: []
-      }
-    ],
-    timestamp: Date.now() - 3600000
-  }
-];
-
 // --- Main App Component ---
 export default function App() {
   const [activeTab, setActiveTab] = useState<"feed" | "wallet" | "messages" | "profile">("feed");
@@ -236,15 +206,15 @@ export default function App() {
       });
       const data = await res.json();
       
-      if (data.success) {
+      if (data.success && data.user) {
         const userData = {
-          name: data.user.name,
-          username: data.user.username,
-          avatar: data.user.avatar,
-          walletBalance: data.user.wallet_balance,
+          name: data.user.name || "User",
+          username: data.user.username || "user",
+          avatar: data.user.avatar || `https://picsum.photos/seed/${data.user.username}/100/100`,
+          walletBalance: Number(data.user.wallet_balance || 0),
           isLoggedIn: true,
-          followersCount: data.user.followers_count,
-          followingCount: data.user.following_count,
+          followersCount: Number(data.user.followers_count || 0),
+          followingCount: Number(data.user.following_count || 0),
           isVerified: !!data.user.is_verified
         };
         setUser(userData);
@@ -281,11 +251,11 @@ export default function App() {
   };
 
   const handleWithdraw = () => {
-    if (user.walletBalance < 100) return;
+    if ((user.walletBalance || 0) < 100) return;
     
     setIsLoading(true);
     setTimeout(() => {
-      alert(`আপনার ৳${user.walletBalance.toFixed(2)} উইথড্র রিকোয়েস্ট সফলভাবে গ্রহণ করা হয়েছে। ২৪ ঘণ্টার মধ্যে পেমেন্ট পাবেন।`);
+      alert(`আপনার ৳${(user.walletBalance || 0).toFixed(2)} উইথড্র রিকোয়েস্ট সফলভাবে গ্রহণ করা হয়েছে। ২৪ ঘণ্টার মধ্যে পেমেন্ট পাবেন।`);
       setUser(prev => ({ ...prev, walletBalance: 0 }));
       setIsLoading(false);
     }, 15000);
@@ -875,7 +845,7 @@ export default function App() {
         <h2 className="text-slate-400 font-medium">মোট ব্যালেন্স</h2>
         <div className="text-5xl font-black text-white flex items-center justify-center gap-2">
           <span className="text-[var(--color-accent)]">৳</span>
-          {user.walletBalance.toFixed(2)}
+          {(user.walletBalance || 0).toFixed(2)}
         </div>
         <div className="flex justify-center gap-2">
           <span className="bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1">
@@ -998,7 +968,7 @@ export default function App() {
               <img src={user.avatar} className="w-10 h-10 rounded-full border border-white/10" alt="me" />
               <div className="flex-1 min-w-0">
                 <div className="text-white font-bold truncate">{user.name}</div>
-                <div className="text-slate-500 text-xs truncate">৳{user.walletBalance.toFixed(2)}</div>
+                <div className="text-slate-500 text-xs truncate">৳{(user.walletBalance || 0).toFixed(2)}</div>
               </div>
               <button onClick={handleLogout} className="p-2 text-slate-500 hover:text-red-400 transition-colors">
                 <LogOut className="w-5 h-5" />
