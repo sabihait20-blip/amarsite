@@ -1129,7 +1129,15 @@ export default function App() {
               )}
             </AnimatePresence>
           </div>
-          {!user.isLoggedIn && (
+          {user.isLoggedIn ? (
+            <button 
+              onClick={handleLogout}
+              className="p-2 rounded-xl text-slate-400 hover:text-red-400 transition-colors"
+              title="লগ আউট"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          ) : (
             <button onClick={() => openAuthModal("login")} className="text-[var(--color-accent)] font-bold text-sm">লগইন</button>
           )}
         </div>
